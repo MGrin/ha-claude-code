@@ -12,7 +12,13 @@ import { getUsage } from "./usage";
 
 const app = new Hono();
 
-// Serve static files (UI)
+// Serve static files (UI) with no-cache headers
+app.use("/public/*", async (c, next) => {
+  c.header("Cache-Control", "no-cache, no-store, must-revalidate");
+  c.header("Pragma", "no-cache");
+  c.header("Expires", "0");
+  await next();
+});
 app.use("/public/*", serveStatic({ root: "./" }));
 
 // API: List sessions
