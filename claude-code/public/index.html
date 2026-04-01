@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Claude Code</title>
+  <link rel="stylesheet" href="public/styles.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+</head>
+<body>
+  <div id="app">
+    <!-- Sidebar -->
+    <aside id="sidebar">
+      <div class="sidebar-header">
+        <button id="new-chat-btn" title="New Chat">+ New Chat</button>
+      </div>
+      <div id="session-list"></div>
+    </aside>
+
+    <!-- Main area -->
+    <main id="main">
+      <!-- Header -->
+      <header id="header">
+        <button id="sidebar-toggle" title="Toggle sidebar">&#9776;</button>
+        <span id="header-title">Claude Code</span>
+        <div id="usage-bar">
+          <div class="usage-item" title="5-hour usage">
+            <span class="usage-label">5h</span>
+            <div class="usage-track"><div id="usage-5h" class="usage-fill"></div></div>
+            <span id="usage-5h-pct" class="usage-pct">—</span>
+          </div>
+          <div class="usage-item" title="7-day usage">
+            <span class="usage-label">7d</span>
+            <div class="usage-track"><div id="usage-7d" class="usage-fill"></div></div>
+            <span id="usage-7d-pct" class="usage-pct">—</span>
+          </div>
+        </div>
+        <div id="auth-status" class="auth-ok" title="Checking...">&#9679;</div>
+      </header>
+
+      <!-- Messages -->
+      <div id="messages">
+        <div id="welcome" class="welcome">
+          <h2>Claude Code</h2>
+          <p>Ask Claude to help with your Home Assistant setup, code, or anything else.</p>
+        </div>
+      </div>
+
+      <!-- Input -->
+      <div id="input-area">
+        <textarea id="prompt-input" placeholder="Send a message..." rows="1"></textarea>
+        <button id="send-btn" title="Send">&#9654;</button>
+        <button id="stop-btn" title="Stop" style="display:none">&#9632;</button>
+      </div>
+    </main>
+  </div>
+
+  <script src="public/app.js"></script>
+</body>
+</html>
