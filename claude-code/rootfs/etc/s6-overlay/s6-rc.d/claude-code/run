@@ -1,16 +1,77 @@
 #!/command/with-contenv bash
 # shellcheck shell=bash
 
-cd /app
-
-# Ensure HOME is set for Claude config persistence
 export HOME=/data
 
-# Read working directory from add-on config
-if [ -f /data/options.json ]; then
-    WORKING_DIR=$(jq -r '.working_directory // "/config"' /data/options.json)
-    export CLAUDE_WORKING_DIR="${WORKING_DIR}"
-fi
+# ── Create persistent workspace ──────────────────────────
+mkdir -p /data/workspace
+mkdir -p /data/.claude
 
+# ── Write CLAUDE.md for HA context ───────────────────────
+cat > /data/workspace/CLAUDE.md << 'CLAUDEMD'
+# Home Assistant Claude Code
+
+You are running inside a Home Assistant add-on container on a Raspberry Pi.
+
+## Home Assistant API Access
+
+You have an MCP server called `home-assistant` with tools to interact with HA:
+
+- `ha_get_states` — Get all entity states (optionally filter by domain)
+- `ha_get_state` — Get state of a specific entity
+- `ha_call_service` — Call any HA service (turn on lights, start vacuum, etc.)
+- `ha_get_services` — List available services
+- `ha_create_automation` — Create automations
+- `ha_get_config` — Get HA configuration
+- `ha_fire_event` — Fire events
+- `ha_addon_info` — Get add-on information
+- `ha_supervisor_info` — Get system information
+
+Use these tools instead of curl/REST API calls — they handle authentication automatically.
+
+## For Dashboard Modifications
+
+Dashboard configs require the WebSocket API. Use a Python script:
+```python
+import asyncio, json, websockets
+async def update_dashboard():
+    token = os.environ['SUPERVISOR_TOKEN']
+    async with websockets.connect('ws://supervisor/core/websocket') as ws:
+        await ws.recv()  # auth_required
+        await ws.send(json.dumps({'type': 'auth', 'access_token': token}))
+        await ws.recv()  # auth_ok
+        # ... send commands
+```
+
+## Environment
+
+- **Working directory**: /data/workspace (persistent, backed up)
+- **HA config**: /config (read-only mount of HA configuration)
+- **Platform**: Raspberry Pi (aarch64), Home Assistant OS
+- **SUPERVISOR_TOKEN**: Available in environment for API auth
+CLAUDEMD
+
+# ── Write MCP config for HA tools ────────────────────────
+cat > /data/workspace/.mcp.json << MCPJSON
+{
+  "mcpServers": {
+    "home-assistant": {
+      "command": "/root/.bun/bin/bun",
+      "args": ["run", "/app/src/ha-mcp.ts"],
+      "env": {
+        "SUPERVISOR_TOKEN": "${SUPERVISOR_TOKEN}"
+      }
+    }
+  }
+}
+MCPJSON
+
+# ── Set working directory ────────────────────────────────
+export CLAUDE_WORKING_DIR="/data/workspace"
+
+# ── Start the web server ─────────────────────────────────
+cd /app
 echo "Starting Claude Code HA add-on on port 5100..."
+echo "Workspace: /data/workspace"
+echo "MCP: home-assistant configured"
 exec /root/.bun/bin/bun run src/server.ts

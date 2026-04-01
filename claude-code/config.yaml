@@ -1,5 +1,5 @@
 name: "Claude Code"
-version: "0.2.5"
+version: "0.3.0"
 slug: "claude-code"
 description: "Chat with Claude Code from your Home Assistant dashboard"
 url: "https://github.com/MGrin/ha-claude-code"
@@ -14,12 +14,13 @@ panel_title: Claude Code
 startup: services
 init: false
 boot: auto
+hassio_api: true
+homeassistant_api: true
+hassio_role: default
 map:
   - type: config
     read_only: true
   - type: share
     read_only: false
-options:
-  working_directory: "/config"
-schema:
-  working_directory: str?
+options: {}
+schema: {}
