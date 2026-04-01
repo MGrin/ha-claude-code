@@ -313,6 +313,101 @@ html, body {
   50% { opacity: 0; }
 }
 
+/* Thinking block */
+.thinking-block {
+  background: #1a1a2e;
+  border: 1px solid #2d2b55;
+  border-radius: 8px;
+  margin: 8px 0;
+  font-size: 12px;
+  overflow: hidden;
+}
+
+.thinking-block .thinking-header {
+  padding: 6px 10px;
+  color: #a78bfa;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.thinking-block.active .thinking-header::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  background: #a78bfa;
+  border-radius: 50%;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+
+.thinking-block .thinking-body {
+  display: none;
+  padding: 8px 10px;
+  border-top: 1px solid #2d2b55;
+  font-family: "SF Mono", monospace;
+  white-space: pre-wrap;
+  color: var(--text-muted);
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.thinking-block.expanded .thinking-body {
+  display: block;
+}
+
+/* Status indicator */
+.status-indicator {
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-style: italic;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.status-indicator::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  background: var(--accent);
+  border-radius: 50%;
+  animation: pulse 1.5s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+/* System message */
+.message.system-message {
+  align-self: center;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 13px;
+  max-width: 90%;
+  border-radius: 8px;
+}
+
+.message.system-message code {
+  background: var(--bg-primary);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: "SF Mono", monospace;
+  font-size: 12px;
+}
+
+.message.system-message pre {
+  background: var(--bg-primary);
+  padding: 10px;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 6px 0;
+}
+
 /* Input */
 #input-area {
   padding: 12px 16px;

@@ -1,7 +1,13 @@
 import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
 import { streamSSE } from "hono/streaming";
-import { getSessions, getMessages, streamChat, checkAuth } from "./claude";
+import {
+  getSessions,
+  getMessages,
+  streamChat,
+  checkAuth,
+  deleteSession,
+} from "./claude";
 import { getUsage } from "./usage";
 
 const app = new Hono();
@@ -13,6 +19,13 @@ app.use("/public/*", serveStatic({ root: "./" }));
 app.get("/api/sessions", async (c) => {
   const sessions = await getSessions();
   return c.json(sessions);
+});
+
+// API: Delete session
+app.delete("/api/sessions/:id", async (c) => {
+  const id = c.req.param("id");
+  const ok = await deleteSession(id);
+  return c.json({ ok });
 });
 
 // API: Get session messages

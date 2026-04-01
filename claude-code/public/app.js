@@ -10,7 +10,6 @@ const sidebarToggle = document.getElementById("sidebar-toggle");
 const newChatBtn = document.getElementById("new-chat-btn");
 const sessionList = document.getElementById("session-list");
 const messagesEl = document.getElementById("messages");
-const welcomeEl = document.getElementById("welcome");
 const promptInput = document.getElementById("prompt-input");
 const sendBtn = document.getElementById("send-btn");
 const stopBtn = document.getElementById("stop-btn");
@@ -23,7 +22,6 @@ const usage7dPct = document.getElementById("usage-7d-pct");
 // Get base path from Ingress
 const basePath = (() => {
   const path = window.location.pathname;
-  // Ingress paths look like /api/hassio_ingress/xxx/
   const match = path.match(/^(\/api\/hassio_ingress\/[^/]+)/);
   return match ? match[1] : "";
 })();
@@ -44,9 +42,7 @@ marked.setOptions({
 });
 
 // Sidebar toggle
-sidebarToggle.addEventListener("click", () => {
-  sidebar.classList.toggle("hidden");
-});
+sidebarToggle.addEventListener("click", () => sidebar.classList.toggle("hidden"));
 
 // Auto-resize textarea
 promptInput.addEventListener("input", () => {
@@ -66,7 +62,10 @@ sendBtn.addEventListener("click", sendMessage);
 stopBtn.addEventListener("click", stopStreaming);
 newChatBtn.addEventListener("click", startNewChat);
 
-// Load sessions
+// ============================================================
+// Sessions
+// ============================================================
+
 async function loadSessions() {
   try {
     const res = await fetch(apiUrl("/api/sessions"));
@@ -83,27 +82,46 @@ function renderSessionList() {
       (s) => `
     <div class="session-item ${s.id === activeSessionId ? "active" : ""}" data-id="${s.id}">
       <span class="session-title">${escapeHtml(s.title)}</span>
+      <button class="session-delete" data-id="${s.id}" title="Delete session">&times;</button>
     </div>
   `,
     )
     .join("");
 
   sessionList.querySelectorAll(".session-item").forEach((el) => {
-    el.addEventListener("click", () => loadSession(el.dataset.id));
+    el.addEventListener("click", (e) => {
+      if (e.target.classList.contains("session-delete")) return;
+      loadSession(el.dataset.id);
+    });
   });
+
+  sessionList.querySelectorAll(".session-delete").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      deleteSessionUI(btn.dataset.id);
+    });
+  });
+}
+
+async function deleteSessionUI(id) {
+  if (!confirm("Delete this session?")) return;
+  try {
+    await fetch(apiUrl(`/api/sessions/${id}`), { method: "DELETE" });
+    if (activeSessionId === id) startNewChat();
+    await loadSessions();
+  } catch {
+    appendSystemMessage("Failed to delete session.");
+  }
 }
 
 async function loadSession(id) {
   activeSessionId = id;
   renderSessionList();
-
   messagesEl.innerHTML = "";
-  welcomeEl?.remove();
 
   try {
     const res = await fetch(apiUrl(`/api/sessions/${id}/messages`));
     const messages = await res.json();
-
     for (const msg of messages) {
       appendMessage(msg.role, msg.content, msg.toolUse);
     }
@@ -124,9 +142,32 @@ function startNewChat() {
   `;
 }
 
+// ============================================================
+// Sending messages
+// ============================================================
+
 async function sendMessage() {
   const prompt = promptInput.value.trim();
   if (!prompt || isStreaming) return;
+
+  // Handle slash commands locally
+  if (prompt.startsWith("/")) {
+    const cmd = prompt.slice(1).split(" ")[0].toLowerCase();
+    if (cmd === "login") {
+      appendSystemMessage(
+        "To authenticate, open the HA Terminal add-on and run:\n\ndocker exec -it addon_67c731ca_claude-code claude login\n\nThen follow the URL to authenticate with your Anthropic account.",
+      );
+      promptInput.value = "";
+      return;
+    }
+    if (cmd === "logout") {
+      appendSystemMessage(
+        "To log out, open the HA Terminal add-on and run:\n\ndocker exec -it addon_67c731ca_claude-code claude logout",
+      );
+      promptInput.value = "";
+      return;
+    }
+  }
 
   // Remove welcome
   document.getElementById("welcome")?.remove();
@@ -145,6 +186,9 @@ async function sendMessage() {
   const sessionId = activeSessionId || "new";
   const assistantEl = createAssistantBubble();
   let fullText = "";
+  let thinkingText = "";
+  let isThinking = false;
+  let statusEl = null;
 
   try {
     const res = await fetch(apiUrl(`/api/sessions/${sessionId}/message`), {
@@ -175,7 +219,7 @@ async function sendMessage() {
           if (!data) continue;
           try {
             const parsed = JSON.parse(data);
-            handleSSEEvent(currentEvent, parsed, assistantEl, { getText: () => fullText, setText: (t) => (fullText = t) });
+            handleEvent(currentEvent, parsed);
           } catch {}
           currentEvent = "";
         }
@@ -188,55 +232,131 @@ async function sendMessage() {
   }
 
   // Finalize
+  removeStatusIndicator();
   assistantEl.querySelector(".content")?.classList.remove("streaming-cursor");
+  const thinkingEl = assistantEl.querySelector(".thinking-block");
+  if (thinkingEl) thinkingEl.classList.remove("active");
   isStreaming = false;
   sendBtn.style.display = "flex";
   stopBtn.style.display = "none";
   abortController = null;
   scrollToBottom();
-
-  // Reload sessions to pick up new/updated session
   loadSessions();
-}
 
-function handleSSEEvent(type, data, el, textState) {
-  const contentEl = el.querySelector(".content");
+  function handleEvent(type, data) {
+    const contentEl = assistantEl.querySelector(".content");
 
-  if (type === "init" || data.sessionId) {
-    if (data.sessionId && !activeSessionId) {
-      activeSessionId = data.sessionId;
+    switch (type) {
+      case "init":
+        if (data.sessionId && !activeSessionId) {
+          activeSessionId = data.sessionId;
+        }
+        showStatus("Connected — model: " + (data.model || "claude"));
+        break;
+
+      case "thinking_start":
+        isThinking = true;
+        thinkingText = "";
+        ensureThinkingBlock(assistantEl);
+        break;
+
+      case "thinking_delta":
+        if (data.text) {
+          thinkingText += data.text;
+          updateThinkingBlock(assistantEl, thinkingText);
+          scrollToBottom();
+        }
+        break;
+
+      case "text_delta":
+        if (data.text) {
+          if (isThinking) {
+            isThinking = false;
+            const tb = assistantEl.querySelector(".thinking-block");
+            if (tb) tb.classList.remove("active");
+          }
+          removeStatusIndicator();
+          fullText += data.text;
+          contentEl.innerHTML = marked.parse(fullText);
+          contentEl.classList.add("streaming-cursor");
+          scrollToBottom();
+        }
+        break;
+
+      case "tool_start":
+        showStatus(`Using tool: ${data.name}...`);
+        break;
+
+      case "tool_use": {
+        const toolEl = createToolBlock(data.name, data.input);
+        assistantEl.insertBefore(toolEl, contentEl.nextSibling);
+        showStatus(`Running ${data.name}...`);
+        scrollToBottom();
+        break;
+      }
+
+      case "tool_result": {
+        const lastTool = assistantEl.querySelector(".tool-use:last-of-type");
+        if (lastTool) {
+          const body = lastTool.querySelector(".tool-use-body");
+          if (body && data.content) {
+            body.textContent += "\n--- Result ---\n" + data.content;
+          }
+        }
+        break;
+      }
+
+      case "tool_progress":
+        showStatus(`${data.tool_name}: ${data.message}`);
+        break;
+
+      case "tool_summary":
+        showStatus(`${data.tool_name}: ${data.summary}`);
+        break;
+
+      case "status":
+        showStatus(data.message);
+        break;
+
+      case "rate_limit":
+        updateUsageDisplay(data);
+        break;
+
+      case "result":
+        removeStatusIndicator();
+        contentEl.classList.remove("streaming-cursor");
+        if (data.subtype !== "success" && data.errors?.length) {
+          appendSystemMessage("Error: " + data.errors.join(", "));
+        }
+        if (data.cost != null) {
+          showStatus(`Done — $${data.cost.toFixed(4)} · ${data.numTurns || 1} turns`);
+          setTimeout(removeStatusIndicator, 5000);
+        }
+        break;
+
+      case "error":
+        appendSystemMessage("Error: " + (data.message || "Unknown error"));
+        break;
+
+      case "block_stop":
+        break;
     }
   }
 
-  if (type === "text_delta" && data.text) {
-    textState.setText(textState.getText() + data.text);
-    contentEl.innerHTML = marked.parse(textState.getText());
-    contentEl.classList.add("streaming-cursor");
+  function showStatus(text) {
+    if (!statusEl) {
+      statusEl = document.createElement("div");
+      statusEl.className = "status-indicator";
+      assistantEl.appendChild(statusEl);
+    }
+    statusEl.textContent = text;
     scrollToBottom();
   }
 
-  if (type === "tool_use") {
-    const toolEl = document.createElement("div");
-    toolEl.className = "tool-use";
-    toolEl.innerHTML = `
-      <div class="tool-use-header">${escapeHtml(data.name)}</div>
-      <div class="tool-use-body">${escapeHtml(typeof data.input === "string" ? data.input : JSON.stringify(data.input, null, 2))}</div>
-    `;
-    toolEl.querySelector(".tool-use-header").addEventListener("click", () => {
-      toolEl.classList.toggle("open");
-    });
-    el.appendChild(toolEl);
-    scrollToBottom();
-  }
-
-  if (type === "rate_limit") {
-    updateUsageDisplay(data);
-  }
-
-  if (type === "result") {
-    contentEl.classList.remove("streaming-cursor");
-    if (data.subtype !== "success" && data.errors?.length) {
-      appendSystemMessage("Error: " + data.errors.join(", "));
+  function removeStatusIndicator() {
+    if (statusEl) {
+      statusEl.remove();
+      statusEl = null;
     }
   }
 }
@@ -245,12 +365,54 @@ function stopStreaming() {
   if (abortController) abortController.abort();
 }
 
+// ============================================================
+// UI helpers
+// ============================================================
+
 function createAssistantBubble() {
   const el = document.createElement("div");
   el.className = "message assistant";
   el.innerHTML = '<div class="content streaming-cursor"></div>';
   messagesEl.appendChild(el);
   scrollToBottom();
+  return el;
+}
+
+function ensureThinkingBlock(parentEl) {
+  let block = parentEl.querySelector(".thinking-block");
+  if (!block) {
+    block = document.createElement("div");
+    block.className = "thinking-block active";
+    block.innerHTML =
+      '<div class="thinking-header">Thinking...</div><div class="thinking-body"></div>';
+    block.querySelector(".thinking-header").addEventListener("click", () => {
+      block.classList.toggle("expanded");
+    });
+    parentEl.insertBefore(block, parentEl.querySelector(".content"));
+  }
+  block.classList.add("active");
+  return block;
+}
+
+function updateThinkingBlock(parentEl, text) {
+  const block = parentEl.querySelector(".thinking-block");
+  if (block) {
+    block.querySelector(".thinking-body").textContent = text;
+  }
+}
+
+function createToolBlock(name, input) {
+  const el = document.createElement("div");
+  el.className = "tool-use";
+  const inputStr =
+    typeof input === "string" ? input : JSON.stringify(input, null, 2);
+  el.innerHTML = `
+    <div class="tool-use-header">${escapeHtml(name)}</div>
+    <div class="tool-use-body">${escapeHtml(inputStr)}</div>
+  `;
+  el.querySelector(".tool-use-header").addEventListener("click", () => {
+    el.classList.toggle("open");
+  });
   return el;
 }
 
@@ -262,16 +424,7 @@ function appendMessage(role, content, toolUse) {
     el.innerHTML = `<div class="content">${marked.parse(content || "")}</div>`;
     if (toolUse?.length) {
       for (const tool of toolUse) {
-        const toolEl = document.createElement("div");
-        toolEl.className = "tool-use";
-        toolEl.innerHTML = `
-          <div class="tool-use-header">${escapeHtml(tool.name)}</div>
-          <div class="tool-use-body">${escapeHtml(typeof tool.input === "string" ? tool.input : JSON.stringify(tool.input, null, 2))}</div>
-        `;
-        toolEl.querySelector(".tool-use-header").addEventListener("click", () => {
-          toolEl.classList.toggle("open");
-        });
-        el.appendChild(toolEl);
+        el.appendChild(createToolBlock(tool.name, tool.input));
       }
     }
   } else {
@@ -284,10 +437,8 @@ function appendMessage(role, content, toolUse) {
 
 function appendSystemMessage(text) {
   const el = document.createElement("div");
-  el.className = "message assistant";
-  el.style.opacity = "0.7";
-  el.style.fontStyle = "italic";
-  el.textContent = text;
+  el.className = "message system-message";
+  el.innerHTML = marked.parse(text);
   messagesEl.appendChild(el);
   scrollToBottom();
 }
@@ -302,7 +453,10 @@ function escapeHtml(str) {
   return d.innerHTML;
 }
 
+// ============================================================
 // Usage display
+// ============================================================
+
 function updateUsageDisplay(rateLimitInfo) {
   if (rateLimitInfo.rateLimitType === "five_hour" && rateLimitInfo.utilization != null) {
     const pct = Math.round(rateLimitInfo.utilization * 100);
@@ -323,7 +477,6 @@ function updateUsageDisplay(rateLimitInfo) {
   }
 }
 
-// Fetch cached usage on load
 async function loadUsage() {
   try {
     const res = await fetch(apiUrl("/api/usage"));
@@ -343,7 +496,6 @@ async function loadUsage() {
   } catch {}
 }
 
-// Check auth
 async function checkAuth() {
   authStatus.className = "auth-checking";
   authStatus.title = "Checking authentication...";
@@ -351,29 +503,23 @@ async function checkAuth() {
     const res = await fetch(apiUrl("/api/auth/status"));
     const data = await res.json();
     authStatus.className = data.authenticated ? "auth-ok" : "auth-error";
-    authStatus.title = data.authenticated ? "Authenticated" : "Not authenticated — run 'claude login' in add-on terminal";
+    authStatus.title = data.authenticated
+      ? "Authenticated"
+      : "Not authenticated — run 'claude login' in add-on terminal";
   } catch {
     authStatus.className = "auth-error";
     authStatus.title = "Cannot reach backend";
   }
 }
 
-// SSE parsing helper — parse raw SSE format properly
-// The SSE stream has lines like:
-//   event: text_delta
-//   data: {"text":"hello"}
-//   (blank line)
-// We need to handle this properly in the reader loop.
-// The current implementation in sendMessage handles this inline.
+// ============================================================
+// Init
+// ============================================================
 
-// Initialize
 loadSessions();
 loadUsage();
 checkAuth();
 
-// Close sidebar on mobile when tapping main area
 document.getElementById("main").addEventListener("click", () => {
-  if (window.innerWidth <= 768) {
-    sidebar.classList.add("hidden");
-  }
+  if (window.innerWidth <= 768) sidebar.classList.add("hidden");
 });
