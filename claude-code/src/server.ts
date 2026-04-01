@@ -93,7 +93,7 @@ app.get("/api/usage", (c) => {
   return c.json(getUsage());
 });
 
-// API: Check auth status — uses `claude auth status`
+// API: Check auth status — uses `claude auth status` + reads credentials file
 app.get("/api/auth/status", async (c) => {
   try {
     const proc = Bun.spawn(["claude", "auth", "status"], {
@@ -102,10 +102,12 @@ app.get("/api/auth/status", async (c) => {
       stderr: "pipe",
     });
     const output = await new Response(proc.stdout).text();
+    const stderr = await new Response(proc.stderr).text();
     const exitCode = await proc.exited;
+
     if (exitCode === 0) {
       try {
-        const data = JSON.parse(output);
+        const data = JSON.parse(output.trim());
         return c.json({
           authenticated: data.loggedIn === true,
           email: data.email,
@@ -113,12 +115,30 @@ app.get("/api/auth/status", async (c) => {
           authMethod: data.authMethod,
         });
       } catch {
-        return c.json({ authenticated: true });
+        // CLI returned success but non-JSON — check credentials file directly
       }
     }
-    return c.json({ authenticated: false });
-  } catch {
-    return c.json({ authenticated: false });
+
+    // Fallback: read credentials file directly
+    try {
+      const credFile = Bun.file("/data/.claude/.credentials.json");
+      if (await credFile.exists()) {
+        const creds = await credFile.json();
+        const oauth = creds.claudeAiOauth;
+        if (oauth?.accessToken) {
+          return c.json({
+            authenticated: true,
+            email: "(from credentials file)",
+            subscription: oauth.subscriptionType || "unknown",
+            authMethod: "credentials_file",
+          });
+        }
+      }
+    } catch {}
+
+    return c.json({ authenticated: false, debug: { exitCode, stdout: output.slice(0, 200), stderr: stderr.slice(0, 200) } });
+  } catch (err: any) {
+    return c.json({ authenticated: false, error: err.message });
   }
 });
 
