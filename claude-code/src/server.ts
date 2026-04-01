@@ -1,257 +1,225 @@
-import { Hono } from "hono";
-import { serveStatic } from "hono/bun";
-import { streamSSE } from "hono/streaming";
-import {
-  getSessions,
-  getMessages,
-  streamChat,
-  deleteSession,
-} from "./claude";
-import { getUsage } from "./usage";
+/**
+ * Web server that serves the wrapper page with session sidebar
+ * and proxies HTTP + WebSocket to ttyd on port 5101.
+ */
+import { readdirSync, readFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
 
-const app = new Hono();
+const TTYD_URL = "http://127.0.0.1:5101";
+const WORKING_DIR = process.env.CLAUDE_WORKING_DIR || "/data/workspace";
+const PORT = 5100;
 
-// Serve static files (UI) with no-cache headers
-app.use("/public/*", async (c, next) => {
-  c.header("Cache-Control", "no-cache, no-store, must-revalidate");
-  c.header("Pragma", "no-cache");
-  c.header("Expires", "0");
-  await next();
-});
-app.use("/public/*", serveStatic({ root: "./" }));
-
-// API: List sessions
-app.get("/api/sessions", async (c) => {
-  const sessions = await getSessions();
-  return c.json(sessions);
-});
-
-// API: Delete session
-app.delete("/api/sessions/:id", async (c) => {
-  const id = c.req.param("id");
-  const ok = await deleteSession(id);
-  return c.json({ ok });
-});
-
-// API: Get session messages
-app.get("/api/sessions/:id/messages", async (c) => {
-  const id = c.req.param("id");
-  const messages = await getMessages(id);
-
-  const formatted = messages
-    .filter((m: any) => m.type === "user" || m.type === "assistant")
-    .map((m: any) => {
-      if (m.type === "user") {
-        const text =
-          typeof m.message?.content === "string"
-            ? m.message.content
-            : m.message?.content
-                ?.filter((b: any) => b.type === "text")
-                .map((b: any) => b.text)
-                .join("") || "";
-        return { role: "user", content: text };
-      }
-      const content = m.message?.content || [];
-      const text = content
-        .filter((b: any) => b.type === "text")
-        .map((b: any) => b.text)
-        .join("");
-      const toolUse = content
-        .filter((b: any) => b.type === "tool_use")
-        .map((b: any) => ({ name: b.name, input: b.input }));
-      return { role: "assistant", content: text, toolUse };
-    });
-
-  return c.json(formatted);
-});
-
-// API: Send message (SSE streaming)
-app.post("/api/sessions/:id/message", async (c) => {
-  const sessionId = c.req.param("id");
-  const body = await c.req.json<{ prompt: string }>();
-  const resumeId = sessionId === "new" ? undefined : sessionId;
-
-  return streamSSE(c, async (stream) => {
-    try {
-      for await (const event of streamChat(body.prompt, resumeId)) {
-        await stream.writeSSE({
-          event: event.type,
-          data: JSON.stringify(event.data),
-        });
-      }
-    } catch (err: any) {
-      await stream.writeSSE({
-        event: "error",
-        data: JSON.stringify({ message: err.message || "Unknown error" }),
-      });
-    }
-  });
-});
-
-// API: Get usage info
-app.get("/api/usage", async (c) => {
-  const usage = await getUsage();
-  return c.json(usage);
-});
-
-// API: Check auth status — uses `claude auth status` + reads credentials file
-app.get("/api/auth/status", async (c) => {
+function getProjectDir(): string | null {
+  const base = join(process.env.HOME || "/data", ".claude", "projects");
+  if (!existsSync(base)) return null;
   try {
-    const proc = Bun.spawn(["claude", "auth", "status"], {
-      env: { ...process.env, HOME: "/data" },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const output = await new Response(proc.stdout).text();
-    const stderr = await new Response(proc.stderr).text();
-    const exitCode = await proc.exited;
+    const dirs = readdirSync(base);
+    return dirs.length > 0 ? join(base, dirs[0]) : null;
+  } catch {
+    return null;
+  }
+}
 
-    if (exitCode === 0) {
+function getSessions() {
+  const dir = getProjectDir();
+  if (!dir) return [];
+  try {
+    const files = readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
+    return files.map((f) => {
+      const id = f.replace(".jsonl", "");
+      let title = "Untitled";
       try {
-        const data = JSON.parse(output.trim());
-        return c.json({
-          authenticated: data.loggedIn === true,
-          email: data.email,
-          subscription: data.subscriptionType,
-          authMethod: data.authMethod,
+        const content = readFileSync(join(dir, f), "utf-8");
+        const firstLine = content.split("\n").find((l) => l.includes('"user"'));
+        if (firstLine) {
+          const msg = JSON.parse(firstLine);
+          const text =
+            typeof msg?.message?.content === "string"
+              ? msg.message.content
+              : msg?.message?.content?.find?.((b: any) => b.type === "text")?.text;
+          if (text) title = text.slice(0, 60);
+        }
+      } catch {}
+      return { id, title };
+    }).reverse();
+  } catch {
+    return [];
+  }
+}
+
+const HTML = /*html*/ `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <title>Claude Code</title>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    html,body{height:100%;overflow:hidden;background:#1c1c1e;color:#f5f5f7;
+      font-family:-apple-system,BlinkMacSystemFont,"SF Pro",system-ui,sans-serif;font-size:13px}
+    #app{display:flex;height:100%}
+    #sidebar{width:240px;min-width:240px;background:#2c2c2e;border-right:1px solid #3a3a3c;
+      display:flex;flex-direction:column;transition:margin-left .2s}
+    #sidebar.hidden{margin-left:-240px}
+    .sb-hdr{padding:8px;border-bottom:1px solid #3a3a3c;display:flex;flex-direction:column;gap:5px}
+    .sb-btn{width:100%;padding:7px;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:500}
+    #btn-new{background:#6c5ce7;color:#fff}#btn-new:hover{background:#7c6cf7}
+    #btn-resume{background:#3a3a3c;color:#f5f5f7}#btn-resume:hover{background:#48484a}
+    #slist{flex:1;overflow-y:auto;padding:4px}
+    .si{padding:7px 9px;border-radius:5px;cursor:pointer;margin-bottom:1px;
+      font-size:11px;color:#98989d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .si:hover{background:#3a3a3c;color:#f5f5f7}
+    #main{flex:1;display:flex;flex-direction:column;min-width:0}
+    #hdr{display:flex;align-items:center;padding:4px 10px;background:#2c2c2e;
+      border-bottom:1px solid #3a3a3c;gap:8px;min-height:36px}
+    #hdr button{background:none;border:none;color:#f5f5f7;font-size:16px;cursor:pointer;padding:2px 4px}
+    #hdr span{font-weight:600;font-size:13px}
+    #term{flex:1;border:none;width:100%;height:100%;background:#1c1c1e}
+    ::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:#3a3a3c;border-radius:2px}
+    @media(max-width:768px){
+      #sidebar{position:fixed;left:0;top:0;bottom:0;z-index:100;box-shadow:4px 0 20px rgba(0,0,0,.5)}
+    }
+  </style>
+</head>
+<body>
+<div id="app">
+  <aside id="sidebar">
+    <div class="sb-hdr">
+      <button id="btn-new" class="sb-btn">+ New Session</button>
+      <button id="btn-resume" class="sb-btn">Pick Session (interactive)</button>
+    </div>
+    <div id="slist"></div>
+  </aside>
+  <main id="main">
+    <header id="hdr">
+      <button id="tog">&#9776;</button>
+      <span>Claude Code</span>
+    </header>
+    <iframe id="term"></iframe>
+  </main>
+</div>
+<script>
+const bp=(()=>{const m=location.pathname.match(/^\\/api\\/hassio_ingress\\/[^/]+/);return m?m[0]:""})();
+document.getElementById("tog").addEventListener("click",()=>document.getElementById("sidebar").classList.toggle("hidden"));
+document.getElementById("main").addEventListener("click",()=>{if(innerWidth<=768)document.getElementById("sidebar").classList.add("hidden")});
+
+// Load ttyd in iframe
+document.getElementById("term").src=bp+"/ttyd/";
+
+// Session actions — these write commands to a shared file that the launcher watches
+document.getElementById("btn-new").addEventListener("click",async()=>{
+  await fetch(bp+"/api/command",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({cmd:"new"})});
+  document.getElementById("term").src=bp+"/ttyd/";
+});
+document.getElementById("btn-resume").addEventListener("click",async()=>{
+  await fetch(bp+"/api/command",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({cmd:"resume"})});
+  document.getElementById("term").src=bp+"/ttyd/";
+});
+
+async function loadSessions(){
+  try{
+    const r=await fetch(bp+"/api/sessions");
+    const ss=await r.json();
+    document.getElementById("slist").innerHTML=ss.map(s=>
+      '<div class="si" data-id="'+s.id+'" title="'+s.id+'">'+
+      s.title.replace(/</g,"&lt;").slice(0,50)+'</div>'
+    ).join("");
+    document.querySelectorAll(".si").forEach(el=>{
+      el.addEventListener("click",async()=>{
+        const id=el.dataset.id;
+        await fetch(bp+"/api/command",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({cmd:"resume-id",id})});
+        document.getElementById("term").src=bp+"/ttyd/";
+      });
+    });
+  }catch{}
+}
+loadSessions();setInterval(loadSessions,15000);
+</script>
+</body>
+</html>`;
+
+let pendingCommand: { cmd: string; id?: string } | null = null;
+
+const server = Bun.serve({
+  port: PORT,
+
+  async fetch(req, server) {
+    const url = new URL(req.url);
+    const path = url.pathname;
+
+    // WebSocket upgrade for ttyd proxy
+    if (path.endsWith("/ws") && req.headers.get("upgrade")?.toLowerCase() === "websocket") {
+      const ok = server.upgrade(req, { data: { search: url.search } });
+      if (ok) return undefined;
+      return new Response("WebSocket upgrade failed", { status: 500 });
+    }
+
+    // API: sessions list
+    if (path.endsWith("/api/sessions")) {
+      return Response.json(getSessions());
+    }
+
+    // API: send command to terminal
+    if (path.endsWith("/api/command") && req.method === "POST") {
+      const body = await req.json() as { cmd: string; id?: string };
+      pendingCommand = body;
+      return Response.json({ ok: true });
+    }
+
+    // API: get pending command (called by launcher)
+    if (path.endsWith("/api/command") && req.method === "GET") {
+      const cmd = pendingCommand;
+      pendingCommand = null;
+      return Response.json(cmd || { cmd: null });
+    }
+
+    // Proxy ttyd HTTP
+    if (path.includes("/ttyd")) {
+      const ttydPath = path.replace(/.*\/ttyd/, "") || "/";
+      try {
+        const resp = await fetch(TTYD_URL + ttydPath + url.search, {
+          method: req.method,
+          headers: req.headers,
         });
+        const headers = new Headers(resp.headers);
+        headers.delete("content-encoding");
+        return new Response(resp.body, { status: resp.status, headers });
       } catch {
-        // CLI returned success but non-JSON — check credentials file directly
+        return new Response("ttyd not ready yet — try refreshing in a few seconds", { status: 502 });
       }
     }
 
-    // Fallback: read credentials file directly
-    try {
-      const credFile = Bun.file("/data/.claude/.credentials.json");
-      if (await credFile.exists()) {
-        const creds = await credFile.json();
-        const oauth = creds.claudeAiOauth;
-        if (oauth?.accessToken) {
-          return c.json({
-            authenticated: true,
-            email: "(from credentials file)",
-            subscription: oauth.subscriptionType || "unknown",
-            authMethod: "credentials_file",
-          });
-        }
+    // Serve main page
+    return new Response(HTML, {
+      headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-cache" },
+    });
+  },
+
+  websocket: {
+    open(ws: any) {
+      const upstream = new WebSocket(TTYD_URL.replace("http", "ws") + "/ws" + (ws.data?.search || ""));
+      ws.data.upstream = upstream;
+      upstream.binaryType = "arraybuffer";
+      upstream.onmessage = (e: any) => {
+        try { ws.send(e.data); } catch {}
+      };
+      upstream.onclose = () => {
+        try { ws.close(); } catch {}
+      };
+      upstream.onerror = () => {
+        try { ws.close(); } catch {}
+      };
+    },
+    message(ws: any, msg: any) {
+      if (ws.data.upstream?.readyState === WebSocket.OPEN) {
+        ws.data.upstream.send(msg);
       }
-    } catch {}
-
-    return c.json({ authenticated: false, debug: { exitCode, stdout: output.slice(0, 200), stderr: stderr.slice(0, 200) } });
-  } catch (err: any) {
-    return c.json({ authenticated: false, error: err.message });
-  }
+    },
+    close(ws: any) {
+      ws.data.upstream?.close();
+    },
+  },
 });
 
-// API: Initiate login — runs `claude auth login` and captures the OAuth URL
-app.post("/api/auth/login", async (c) => {
-  return streamSSE(c, async (stream) => {
-    try {
-      const proc = Bun.spawn(["claude", "auth", "login", "--claudeai"], {
-        env: { ...process.env, HOME: "/data", BROWSER: "echo" },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-
-      const reader = proc.stdout.getReader();
-      const decoder = new TextDecoder();
-      let output = "";
-      const timeout = setTimeout(() => {
-        proc.kill();
-      }, 120_000);
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        const chunk = decoder.decode(value, { stream: true });
-        output += chunk;
-
-        // Look for URLs in the output
-        const urlMatch = chunk.match(
-          /https:\/\/[^\s]+/,
-        );
-        if (urlMatch) {
-          await stream.writeSSE({
-            event: "auth_url",
-            data: JSON.stringify({ url: urlMatch[0] }),
-          });
-        }
-
-        await stream.writeSSE({
-          event: "output",
-          data: JSON.stringify({ text: chunk }),
-        });
-      }
-
-      clearTimeout(timeout);
-      const exitCode = await proc.exited;
-
-      await stream.writeSSE({
-        event: "done",
-        data: JSON.stringify({
-          success: exitCode === 0,
-          output,
-        }),
-      });
-    } catch (err: any) {
-      await stream.writeSSE({
-        event: "error",
-        data: JSON.stringify({ message: err.message }),
-      });
-    }
-  });
-});
-
-// API: Set credentials directly (for environments where OAuth callback can't work)
-// Accepts both Ingress (no auth needed) and Bearer token auth
-app.post("/api/auth/credentials", async (c) => {
-  // Verify the request comes from either Ingress (172.30.32.2) or has a valid Supervisor token
-  const authHeader = c.req.header("Authorization");
-  const remoteIp = c.req.header("X-Forwarded-For") || c.req.header("X-Real-IP") || "";
-  const isIngress = remoteIp.includes("172.30.32");
-  const hasSupervisorToken = authHeader && authHeader.startsWith("Bearer ") &&
-    process.env.SUPERVISOR_TOKEN && authHeader.slice(7) === process.env.SUPERVISOR_TOKEN;
-
-  // Also accept any valid HA long-lived token by checking with HA API
-  let hasValidHaToken = false;
-  if (authHeader && authHeader.startsWith("Bearer ") && !hasSupervisorToken) {
-    try {
-      const res = await fetch("http://supervisor/core/api/", {
-        headers: { Authorization: authHeader },
-      });
-      hasValidHaToken = res.ok;
-    } catch {}
-  }
-
-  if (!isIngress && !hasSupervisorToken && !hasValidHaToken) {
-    return c.json({ ok: false, error: "Unauthorized" }, 401);
-  }
-
-  try {
-    const body = await c.req.json();
-    const credDir = "/data/.claude";
-    const credPath = credDir + "/.credentials.json";
-    // Ensure directory exists
-    const { mkdirSync, existsSync } = await import("node:fs");
-    if (!existsSync(credDir)) mkdirSync(credDir, { recursive: true });
-    await Bun.write(credPath, JSON.stringify(body, null, 2));
-    return c.json({ ok: true });
-  } catch (err: any) {
-    return c.json({ ok: false, error: err.message }, 500);
-  }
-});
-
-// Serve main UI for all other routes (SPA)
-app.get("*", async (c) => {
-  const html = await Bun.file("./public/index.html").text();
-  return c.html(html);
-});
-
-const port = parseInt(process.env.INGRESS_PORT || "5100");
-
-console.log(`Claude Code HA Add-on starting on port ${port}`);
-
-export default {
-  port,
-  fetch: app.fetch,
-};
+console.log(`Claude Code HA Add-on v0.4.1 on port ${PORT}`);

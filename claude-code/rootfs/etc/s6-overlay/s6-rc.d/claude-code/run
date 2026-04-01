@@ -2,6 +2,8 @@
 # shellcheck shell=bash
 
 export HOME=/data
+export LANG=C.UTF-8
+export LC_ALL=C.UTF-8
 
 # ── Create persistent workspace ──────────────────────────
 mkdir -p /data/workspace
@@ -75,16 +77,17 @@ if [ -f /data/options.json ]; then
     fi
 fi
 
-# ── Start ttyd serving Claude Code TUI ───────────────────
-echo "Starting Claude Code terminal on port 5100..."
-echo "Workspace: /data/workspace"
-echo "MCP: home-assistant configured"
-
-exec ttyd \
-    --port 5100 \
+# ── Start ttyd on internal port (proxied by Bun server) ──
+echo "Starting ttyd on port 5101 (internal)..."
+ttyd \
+    --port 5101 \
     --writable \
     --client-option reconnect=5 \
     --client-option fontSize=14 \
-    --client-option fontFamily="'SF Mono','Fira Code','Consolas','Menlo',monospace" \
-    --client-option theme='{"background":"#1c1c1e","foreground":"#f5f5f7","cursor":"#6c5ce7","selectionBackground":"#6c5ce740"}' \
-    /usr/local/bin/claude-launcher.sh
+    /usr/local/bin/claude-launcher.sh &
+
+# ── Start web server with sidebar + terminal proxy ───────
+export CLAUDE_WORKING_DIR="/data/workspace"
+cd /app
+echo "Starting web server on port 5100..."
+exec /root/.bun/bin/bun run src/server.ts
