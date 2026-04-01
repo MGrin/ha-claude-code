@@ -89,8 +89,9 @@ app.post("/api/sessions/:id/message", async (c) => {
 });
 
 // API: Get usage info
-app.get("/api/usage", (c) => {
-  return c.json(getUsage());
+app.get("/api/usage", async (c) => {
+  const usage = await getUsage();
+  return c.json(usage);
 });
 
 // API: Check auth status — uses `claude auth status` + reads credentials file
