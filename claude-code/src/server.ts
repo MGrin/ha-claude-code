@@ -100,6 +100,65 @@ app.get("/api/auth/status", async (c) => {
   return c.json({ authenticated });
 });
 
+// API: Initiate login — runs `claude login` and captures the OAuth URL
+app.post("/api/auth/login", async (c) => {
+  return streamSSE(c, async (stream) => {
+    try {
+      const proc = Bun.spawn(["claude", "login"], {
+        env: { ...process.env, HOME: "/data", BROWSER: "echo" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const reader = proc.stdout.getReader();
+      const decoder = new TextDecoder();
+      let output = "";
+      const timeout = setTimeout(() => {
+        proc.kill();
+      }, 120_000);
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value, { stream: true });
+        output += chunk;
+
+        // Look for URLs in the output
+        const urlMatch = chunk.match(
+          /https:\/\/[^\s]+/,
+        );
+        if (urlMatch) {
+          await stream.writeSSE({
+            event: "auth_url",
+            data: JSON.stringify({ url: urlMatch[0] }),
+          });
+        }
+
+        await stream.writeSSE({
+          event: "output",
+          data: JSON.stringify({ text: chunk }),
+        });
+      }
+
+      clearTimeout(timeout);
+      const exitCode = await proc.exited;
+
+      await stream.writeSSE({
+        event: "done",
+        data: JSON.stringify({
+          success: exitCode === 0,
+          output,
+        }),
+      });
+    } catch (err: any) {
+      await stream.writeSSE({
+        event: "error",
+        data: JSON.stringify({ message: err.message }),
+      });
+    }
+  });
+});
+
 // Serve main UI for all other routes (SPA)
 app.get("*", async (c) => {
   const html = await Bun.file("./public/index.html").text();

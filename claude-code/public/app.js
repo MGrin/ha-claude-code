@@ -180,16 +180,12 @@ async function sendMessage() {
   if (prompt.startsWith("/")) {
     const cmd = prompt.slice(1).split(" ")[0].toLowerCase();
     if (cmd === "login") {
-      appendSystemMessage(
-        "To authenticate, open the HA Terminal add-on and run:\n\ndocker exec -it addon_67c731ca_claude-code claude login\n\nThen follow the URL to authenticate with your Anthropic account.",
-      );
       promptInput.value = "";
+      await initiateLogin();
       return;
     }
     if (cmd === "logout") {
-      appendSystemMessage(
-        "To log out, open the HA Terminal add-on and run:\n\ndocker exec -it addon_67c731ca_claude-code claude logout",
-      );
+      appendSystemMessage("Logout is not yet supported from the UI. You can delete `/data/.claude/.credentials.json` via the Studio Code Server add-on.");
       promptInput.value = "";
       return;
     }
@@ -535,6 +531,62 @@ async function checkAuth() {
   } catch {
     authStatus.className = "auth-error";
     authStatus.title = "Cannot reach backend";
+  }
+}
+
+// ============================================================
+// Login flow
+// ============================================================
+
+async function initiateLogin() {
+  appendSystemMessage("Starting authentication...");
+
+  try {
+    const res = await fetch(apiUrl("/api/auth/login"), { method: "POST" });
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let currentEvent = "";
+    let authUrl = null;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        if (line.startsWith("event:")) {
+          currentEvent = line.slice(6).trim();
+        } else if (line.startsWith("data:")) {
+          const data = line.slice(5).trim();
+          if (!data) continue;
+          try {
+            const parsed = JSON.parse(data);
+            if (currentEvent === "auth_url" && parsed.url) {
+              authUrl = parsed.url;
+              appendSystemMessage(
+                `**Open this link to authenticate:**\n\n[${parsed.url}](${parsed.url})\n\nClick the link above, log in with your Anthropic account, then come back here.`
+              );
+            } else if (currentEvent === "done") {
+              if (parsed.success) {
+                appendSystemMessage("Authentication successful!");
+                checkAuth();
+              } else if (!authUrl) {
+                appendSystemMessage("Authentication process ended. Output:\n\n```\n" + (parsed.output || "no output") + "\n```");
+              }
+            } else if (currentEvent === "error") {
+              appendSystemMessage("Authentication error: " + parsed.message);
+            }
+          } catch {}
+          currentEvent = "";
+        }
+      }
+    }
+  } catch (err) {
+    appendSystemMessage("Failed to start authentication: " + err.message);
   }
 }
 
