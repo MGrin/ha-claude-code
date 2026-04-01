@@ -72,16 +72,19 @@ server.tool(
 
 server.tool(
   "ha_call_service",
-  "Call a Home Assistant service. Examples: turn on a light, start vacuum, set climate temperature, trigger automation.",
+  "Call a Home Assistant service. IMPORTANT: Always use entity_id to target specific entities, NOT area_id. Use ha_get_states to find the right entity_ids first. Examples: entity_id='light.kitchen_switch_switch_2' to control a specific light.",
   {
     domain: z.string().describe("Service domain (e.g. 'light', 'switch', 'climate', 'vacuum', 'automation')"),
     service: z.string().describe("Service name (e.g. 'turn_on', 'turn_off', 'toggle', 'start', 'trigger')"),
-    entity_id: z.string().optional().describe("Target entity ID"),
-    data: z.record(z.unknown()).optional().describe("Additional service data (e.g. {brightness: 255, color_temp: 400})"),
+    entity_id: z.union([z.string(), z.array(z.string())]).describe("Target entity ID or array of entity IDs. REQUIRED — always specify which entity to control. Use ha_get_states to find entity IDs."),
+    data: z.record(z.unknown()).optional().describe("Additional service data (e.g. {brightness: 255, color_temp: 400}). Do NOT put entity_id or area_id here."),
   },
   async ({ domain, service, entity_id, data }) => {
-    const body: Record<string, unknown> = { ...data };
-    if (entity_id) body.entity_id = entity_id;
+    const body: Record<string, unknown> = { ...(data || {}) };
+    // Ensure entity_id is in the body, not nested in data
+    body.entity_id = entity_id;
+    // Remove area_id if accidentally passed — REST API doesn't support it
+    delete body.area_id;
     const result = await haFetch(`/services/${domain}/${service}`, {
       method: "POST",
       body,
