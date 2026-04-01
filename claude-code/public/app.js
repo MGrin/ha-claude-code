@@ -77,30 +77,42 @@ async function loadSessions() {
 }
 
 function renderSessionList() {
-  sessionList.innerHTML = sessions
-    .map(
-      (s) => `
-    <div class="session-item ${s.id === activeSessionId ? "active" : ""}" data-id="${s.id}">
-      <span class="session-title">${escapeHtml(s.title)}</span>
-      <button class="session-delete" data-id="${s.id}" title="Delete session">&times;</button>
-    </div>
-  `,
-    )
-    .join("");
+  // Build session HTML
+  let html = "";
+  if (sessions.length > 0) {
+    html += '<div class="session-actions"><button id="clear-all-btn" class="clear-all-btn">Clear All Sessions</button></div>';
+  }
+  for (const s of sessions) {
+    const active = s.id === activeSessionId ? "active" : "";
+    const title = escapeHtml(s.title);
+    html += `<div class="session-item ${active}" data-id="${s.id}">
+      <span class="session-title">${title}</span>
+      <button class="session-delete" data-sid="${s.id}" title="Delete">x</button>
+    </div>`;
+  }
+  sessionList.innerHTML = html;
 
+  // Bind session click
   sessionList.querySelectorAll(".session-item").forEach((el) => {
     el.addEventListener("click", (e) => {
-      if (e.target.classList.contains("session-delete")) return;
+      if (e.target.closest(".session-delete")) return;
       loadSession(el.dataset.id);
     });
   });
 
+  // Bind delete buttons
   sessionList.querySelectorAll(".session-delete").forEach((btn) => {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
-      deleteSessionUI(btn.dataset.id);
+      deleteSessionUI(btn.dataset.sid);
     });
   });
+
+  // Bind clear all
+  const clearBtn = document.getElementById("clear-all-btn");
+  if (clearBtn) {
+    clearBtn.addEventListener("click", clearAllSessions);
+  }
 }
 
 async function deleteSessionUI(id) {
@@ -111,6 +123,20 @@ async function deleteSessionUI(id) {
     await loadSessions();
   } catch {
     appendSystemMessage("Failed to delete session.");
+  }
+}
+
+async function clearAllSessions() {
+  if (!confirm("Delete ALL sessions? This cannot be undone.")) return;
+  try {
+    for (const s of [...sessions]) {
+      await fetch(apiUrl(`/api/sessions/${s.id}`), { method: "DELETE" });
+    }
+    startNewChat();
+    await loadSessions();
+  } catch {
+    appendSystemMessage("Failed to delete some sessions.");
+    await loadSessions();
   }
 }
 
