@@ -232,12 +232,14 @@ export async function* streamChat(
 
 export async function checkAuth(): Promise<boolean> {
   try {
+    // Use persistSession: false to avoid creating "ghost" sessions
     const conversation = query({
-      prompt: "Say OK",
+      prompt: "ok",
       options: {
         cwd: WORKING_DIR,
         maxTurns: 1,
         model: "claude-haiku-4-5-20251001",
+        persistSession: false,
       },
     });
 
