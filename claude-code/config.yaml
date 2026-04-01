@@ -1,5 +1,5 @@
 name: "Claude Code"
-version: "0.3.2"
+version: "0.3.3"
 slug: "claude-code"
 description: "Chat with Claude Code from your Home Assistant dashboard"
 url: "https://github.com/MGrin/ha-claude-code"
@@ -22,5 +22,7 @@ map:
     read_only: true
   - type: share
     read_only: false
-options: {}
-schema: {}
+options:
+  credentials_json: ""
+schema:
+  credentials_json: str?

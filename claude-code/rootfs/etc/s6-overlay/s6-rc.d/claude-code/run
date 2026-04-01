@@ -66,6 +66,15 @@ cat > /data/workspace/.mcp.json << MCPJSON
 }
 MCPJSON
 
+# ── Apply credentials from add-on options if set ────────
+if [ -f /data/options.json ]; then
+    CREDS_JSON=$(jq -r '.credentials_json // ""' /data/options.json)
+    if [ -n "$CREDS_JSON" ] && [ "$CREDS_JSON" != "" ] && [ "$CREDS_JSON" != "null" ]; then
+        echo "$CREDS_JSON" > /data/.claude/.credentials.json
+        echo "Credentials applied from add-on options."
+    fi
+fi
+
 # ── Set working directory ────────────────────────────────
 export CLAUDE_WORKING_DIR="/data/workspace"
 
