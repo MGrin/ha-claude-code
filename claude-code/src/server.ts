@@ -182,10 +182,37 @@ app.post("/api/auth/login", async (c) => {
 });
 
 // API: Set credentials directly (for environments where OAuth callback can't work)
+// Accepts both Ingress (no auth needed) and Bearer token auth
 app.post("/api/auth/credentials", async (c) => {
+  // Verify the request comes from either Ingress (172.30.32.2) or has a valid Supervisor token
+  const authHeader = c.req.header("Authorization");
+  const remoteIp = c.req.header("X-Forwarded-For") || c.req.header("X-Real-IP") || "";
+  const isIngress = remoteIp.includes("172.30.32");
+  const hasSupervisorToken = authHeader && authHeader.startsWith("Bearer ") &&
+    process.env.SUPERVISOR_TOKEN && authHeader.slice(7) === process.env.SUPERVISOR_TOKEN;
+
+  // Also accept any valid HA long-lived token by checking with HA API
+  let hasValidHaToken = false;
+  if (authHeader && authHeader.startsWith("Bearer ") && !hasSupervisorToken) {
+    try {
+      const res = await fetch("http://supervisor/core/api/", {
+        headers: { Authorization: authHeader },
+      });
+      hasValidHaToken = res.ok;
+    } catch {}
+  }
+
+  if (!isIngress && !hasSupervisorToken && !hasValidHaToken) {
+    return c.json({ ok: false, error: "Unauthorized" }, 401);
+  }
+
   try {
     const body = await c.req.json();
-    const credPath = "/data/.claude/.credentials.json";
+    const credDir = "/data/.claude";
+    const credPath = credDir + "/.credentials.json";
+    // Ensure directory exists
+    const { mkdirSync, existsSync } = await import("node:fs");
+    if (!existsSync(credDir)) mkdirSync(credDir, { recursive: true });
     await Bun.write(credPath, JSON.stringify(body, null, 2));
     return c.json({ ok: true });
   } catch (err: any) {
