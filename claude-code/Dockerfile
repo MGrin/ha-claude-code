@@ -26,7 +26,7 @@ WORKDIR /app
 COPY package.json ./
 RUN bun install --production
 
-COPY src/ha-mcp.ts ./src/ha-mcp.ts
+COPY src/ ./src/
 
 # Copy rootfs (s6-overlay, launcher script)
 COPY rootfs/ /

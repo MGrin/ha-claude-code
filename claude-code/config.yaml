@@ -1,5 +1,5 @@
 name: "Claude Code"
-version: "0.4.1"
+version: "0.4.2"
 slug: "claude-code"
 description: "Chat with Claude Code from your Home Assistant dashboard"
 url: "https://github.com/MGrin/ha-claude-code"
