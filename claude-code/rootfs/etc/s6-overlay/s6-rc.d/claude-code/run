@@ -9,29 +9,23 @@ export LC_ALL=C.UTF-8
 mkdir -p /data/workspace
 mkdir -p /data/.claude
 
-# ── Write CLAUDE.md for HA context ───────────────────────
+# ── Write CLAUDE.md ──────────────────────────────────────
 cat > /data/workspace/CLAUDE.md << 'CLAUDEMD'
 # Home Assistant Claude Code
 
-You are running inside a Home Assistant add-on container on a Raspberry Pi.
+You are running inside a Home Assistant add-on on a Raspberry Pi.
 
-## Home Assistant API Access
+## HA API Access (MCP Tools)
 
-You have an MCP server called `home-assistant` with tools to interact with HA:
-
-- `ha_get_states` — Get all entity states (optionally filter by domain)
-- `ha_get_state` — Get state of a specific entity
-- `ha_call_service` — Call any HA service. ALWAYS use entity_id, not area_id.
-- `ha_get_services` — List available services
+- `ha_get_states` / `ha_get_state` — Read entities
+- `ha_call_service` — Control devices (ALWAYS use entity_id, not area_id)
+- `ha_get_services` — List services
 - `ha_create_automation` — Create automations
-- `ha_get_config` — Get HA configuration
+- `ha_get_config` — HA config
 - `ha_fire_event` — Fire events
-- `ha_addon_info` — Get add-on information
-- `ha_supervisor_info` — Get system information
+- `ha_addon_info` / `ha_supervisor_info` — System info
 
-## For Dashboard Modifications
-
-Use a Python script with websockets:
+## Dashboard Modifications (WebSocket)
 ```python
 import asyncio, json, os, websockets
 async def main():
@@ -40,17 +34,15 @@ async def main():
         await ws.recv()
         await ws.send(json.dumps({'type': 'auth', 'access_token': token}))
         await ws.recv()
-        # send commands...
 ```
 
 ## Environment
-- Working directory: /data/workspace (persistent, backed up)
+- Working dir: /data/workspace (persistent, backed up)
 - HA config: /config (read-only)
-- Platform: Raspberry Pi (aarch64), HA OS
-- SUPERVISOR_TOKEN in environment
+- SUPERVISOR_TOKEN available in env
 CLAUDEMD
 
-# ── Write MCP config for HA tools ────────────────────────
+# ── Write MCP config ─────────────────────────────────────
 cat > /data/workspace/.mcp.json << MCPJSON
 {
   "mcpServers": {
@@ -65,20 +57,27 @@ cat > /data/workspace/.mcp.json << MCPJSON
 }
 MCPJSON
 
-# ── Apply credentials from add-on options ────────────────
+# ── Apply credentials ────────────────────────────────────
 if [ -f /data/options.json ]; then
     CREDS_JSON=$(jq -r '.credentials_json // ""' /data/options.json)
     if [ -n "$CREDS_JSON" ] && [ "$CREDS_JSON" != "" ] && [ "$CREDS_JSON" != "null" ]; then
         echo "$CREDS_JSON" > /data/.claude/.credentials.json
-        echo "Credentials applied from add-on options."
+        echo "Credentials applied."
     fi
 fi
 
-# ── Start ttyd directly on Ingress port ──────────────────
-echo "Starting Claude Code terminal on port 5100..."
-exec ttyd \
-    --port 5100 \
+# ── Start ttyd on internal port with base-path ───────────
+echo "Starting ttyd on port 5101..."
+ttyd \
+    --port 5101 \
+    --base-path /terminal \
     --writable \
-    --client-option reconnect=5 \
-    --client-option fontSize=14 \
-    /usr/local/bin/claude-launcher.sh
+    /usr/local/bin/claude-launcher.sh &
+
+sleep 1
+
+# ── Start Bun web server on Ingress port ─────────────────
+export CLAUDE_WORKING_DIR="/data/workspace"
+cd /app
+echo "Starting web server on port 5100..."
+exec /root/.bun/bin/bun run src/server.ts
