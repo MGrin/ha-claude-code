@@ -1,5 +1,16 @@
-#!/usr/bin/with-contenv bash
+#!/command/with-contenv bash
 # shellcheck shell=bash
 
 cd /app
-exec bun run src/server.ts
+
+# Ensure HOME is set for Claude config persistence
+export HOME=/data
+
+# Read working directory from add-on config
+if [ -f /data/options.json ]; then
+    WORKING_DIR=$(jq -r '.working_directory // "/config"' /data/options.json)
+    export CLAUDE_WORKING_DIR="${WORKING_DIR}"
+fi
+
+echo "Starting Claude Code HA add-on on port 5100..."
+exec /root/.bun/bin/bun run src/server.ts

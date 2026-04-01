@@ -7,20 +7,21 @@ RUN apk add --no-cache \
     bash \
     git \
     nodejs \
-    npm
+    npm \
+    jq
 
-# Install Bun
+# Install Bun (works on aarch64 and amd64 Alpine)
 RUN curl -fsSL https://bun.sh/install | bash
 ENV PATH="/root/.bun/bin:$PATH"
 
-# Install Claude Code CLI (for authentication via `claude login`)
+# Install Claude Code CLI globally (needed for `claude login` auth)
 RUN npm install -g @anthropic-ai/claude-code
 
 # Set up app directory
 WORKDIR /app
 
 # Install app dependencies
-COPY package.json bun.lock* ./
+COPY package.json ./
 RUN bun install --production
 
 # Copy application code
@@ -30,8 +31,5 @@ COPY public/ ./public/
 # Copy rootfs (s6-overlay service definitions)
 COPY rootfs/ /
 
-# Persistent data directory (sessions, auth)
-RUN mkdir -p /data/.claude
-ENV HOME=/data
-
-EXPOSE 5100
+# Ensure run script is executable
+RUN chmod +x /etc/s6-overlay/s6-rc.d/claude-code/run
