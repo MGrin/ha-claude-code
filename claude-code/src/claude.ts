@@ -89,6 +89,16 @@ export async function* streamChat(
       "Glob",
       "Grep",
       "WebFetch",
+      "mcp__home-assistant__ha_get_states",
+      "mcp__home-assistant__ha_get_state",
+      "mcp__home-assistant__ha_call_service",
+      "mcp__home-assistant__ha_get_services",
+      "mcp__home-assistant__ha_create_automation",
+      "mcp__home-assistant__ha_get_config",
+      "mcp__home-assistant__ha_fire_event",
+      "mcp__home-assistant__ha_addon_info",
+      "mcp__home-assistant__ha_supervisor_info",
+      "ToolSearch",
     ],
   };
 
