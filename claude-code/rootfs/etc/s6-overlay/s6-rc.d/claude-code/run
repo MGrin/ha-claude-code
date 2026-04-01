@@ -21,7 +21,7 @@ You have an MCP server called `home-assistant` with tools to interact with HA:
 
 - `ha_get_states` — Get all entity states (optionally filter by domain)
 - `ha_get_state` — Get state of a specific entity
-- `ha_call_service` — Call any HA service (turn on lights, start vacuum, etc.). ALWAYS use entity_id, not area_id.
+- `ha_call_service` — Call any HA service. ALWAYS use entity_id, not area_id.
 - `ha_get_services` — List available services
 - `ha_create_automation` — Create automations
 - `ha_get_config` — Get HA configuration
@@ -29,28 +29,25 @@ You have an MCP server called `home-assistant` with tools to interact with HA:
 - `ha_addon_info` — Get add-on information
 - `ha_supervisor_info` — Get system information
 
-Use these tools instead of curl/REST API calls — they handle authentication automatically.
-
 ## For Dashboard Modifications
 
-Dashboard configs require the WebSocket API. Use a Python script:
+Use a Python script with websockets:
 ```python
 import asyncio, json, os, websockets
-async def update_dashboard():
+async def main():
     token = os.environ['SUPERVISOR_TOKEN']
     async with websockets.connect('ws://supervisor/core/websocket') as ws:
-        await ws.recv()  # auth_required
+        await ws.recv()
         await ws.send(json.dumps({'type': 'auth', 'access_token': token}))
-        await ws.recv()  # auth_ok
-        # ... send commands
+        await ws.recv()
+        # send commands...
 ```
 
 ## Environment
-
-- **Working directory**: /data/workspace (persistent, backed up)
-- **HA config**: /config (read-only mount of HA configuration)
-- **Platform**: Raspberry Pi (aarch64), Home Assistant OS
-- **SUPERVISOR_TOKEN**: Available in environment for API auth
+- Working directory: /data/workspace (persistent, backed up)
+- HA config: /config (read-only)
+- Platform: Raspberry Pi (aarch64), HA OS
+- SUPERVISOR_TOKEN in environment
 CLAUDEMD
 
 # ── Write MCP config for HA tools ────────────────────────
@@ -68,7 +65,7 @@ cat > /data/workspace/.mcp.json << MCPJSON
 }
 MCPJSON
 
-# ── Apply credentials from add-on options if set ────────
+# ── Apply credentials from add-on options ────────────────
 if [ -f /data/options.json ]; then
     CREDS_JSON=$(jq -r '.credentials_json // ""' /data/options.json)
     if [ -n "$CREDS_JSON" ] && [ "$CREDS_JSON" != "" ] && [ "$CREDS_JSON" != "null" ]; then
@@ -77,17 +74,11 @@ if [ -f /data/options.json ]; then
     fi
 fi
 
-# ── Start ttyd on internal port (proxied by Bun server) ──
-echo "Starting ttyd on port 5101 (internal)..."
-ttyd \
-    --port 5101 \
+# ── Start ttyd directly on Ingress port ──────────────────
+echo "Starting Claude Code terminal on port 5100..."
+exec ttyd \
+    --port 5100 \
     --writable \
     --client-option reconnect=5 \
     --client-option fontSize=14 \
-    /usr/local/bin/claude-launcher.sh &
-
-# ── Start web server with sidebar + terminal proxy ───────
-export CLAUDE_WORKING_DIR="/data/workspace"
-cd /app
-echo "Starting web server on port 5100..."
-exec /root/.bun/bin/bun run src/server.ts
+    /usr/local/bin/claude-launcher.sh
