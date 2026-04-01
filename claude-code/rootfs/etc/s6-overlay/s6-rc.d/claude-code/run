@@ -19,7 +19,7 @@ You have an MCP server called `home-assistant` with tools to interact with HA:
 
 - `ha_get_states` — Get all entity states (optionally filter by domain)
 - `ha_get_state` — Get state of a specific entity
-- `ha_call_service` — Call any HA service (turn on lights, start vacuum, etc.)
+- `ha_call_service` — Call any HA service (turn on lights, start vacuum, etc.). ALWAYS use entity_id, not area_id.
 - `ha_get_services` — List available services
 - `ha_create_automation` — Create automations
 - `ha_get_config` — Get HA configuration
@@ -33,7 +33,7 @@ Use these tools instead of curl/REST API calls — they handle authentication au
 
 Dashboard configs require the WebSocket API. Use a Python script:
 ```python
-import asyncio, json, websockets
+import asyncio, json, os, websockets
 async def update_dashboard():
     token = os.environ['SUPERVISOR_TOKEN']
     async with websockets.connect('ws://supervisor/core/websocket') as ws:
@@ -75,12 +75,16 @@ if [ -f /data/options.json ]; then
     fi
 fi
 
-# ── Set working directory ────────────────────────────────
-export CLAUDE_WORKING_DIR="/data/workspace"
-
-# ── Start the web server ─────────────────────────────────
-cd /app
-echo "Starting Claude Code HA add-on on port 5100..."
+# ── Start ttyd serving Claude Code TUI ───────────────────
+echo "Starting Claude Code terminal on port 5100..."
 echo "Workspace: /data/workspace"
 echo "MCP: home-assistant configured"
-exec /root/.bun/bin/bun run src/server.ts
+
+exec ttyd \
+    --port 5100 \
+    --writable \
+    --client-option reconnect=5 \
+    --client-option fontSize=14 \
+    --client-option fontFamily="'SF Mono','Fira Code','Consolas','Menlo',monospace" \
+    --client-option theme='{"background":"#1c1c1e","foreground":"#f5f5f7","cursor":"#6c5ce7","selectionBackground":"#6c5ce740"}' \
+    /usr/local/bin/claude-launcher.sh

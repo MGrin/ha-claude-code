@@ -8,28 +8,29 @@ RUN apk add --no-cache \
     git \
     nodejs \
     npm \
-    jq
+    jq \
+    ttyd \
+    python3 \
+    py3-pip \
+    py3-websockets
 
-# Install Bun (works on aarch64 and amd64 Alpine)
+# Install Bun
 RUN curl -fsSL https://bun.sh/install | bash
 ENV PATH="/root/.bun/bin:$PATH"
 
-# Install Claude Code CLI globally (needed for `claude login` auth)
+# Install Claude Code CLI
 RUN npm install -g @anthropic-ai/claude-code
 
-# Set up app directory
+# Set up app directory (MCP server + launcher)
 WORKDIR /app
-
-# Install app dependencies
 COPY package.json ./
 RUN bun install --production
 
-# Copy application code
-COPY src/ ./src/
-COPY public/ ./public/
+COPY src/ha-mcp.ts ./src/ha-mcp.ts
 
-# Copy rootfs (s6-overlay service definitions)
+# Copy rootfs (s6-overlay, launcher script)
 COPY rootfs/ /
 
-# Ensure run script is executable
-RUN chmod +x /etc/s6-overlay/s6-rc.d/claude-code/run
+# Ensure scripts are executable
+RUN chmod +x /etc/s6-overlay/s6-rc.d/claude-code/run && \
+    chmod +x /usr/local/bin/claude-launcher.sh
