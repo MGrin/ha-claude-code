@@ -178,14 +178,20 @@ async function sendMessage() {
 
   // Handle slash commands locally
   if (prompt.startsWith("/")) {
-    const cmd = prompt.slice(1).split(" ")[0].toLowerCase();
+    const cmd = prompt.slice(1).split(/\s+/)[0].toLowerCase();
+    const args = prompt.slice(1 + cmd.length).trim();
     if (cmd === "login") {
       promptInput.value = "";
-      await initiateLogin();
+      if (args) {
+        // User pasted credentials JSON
+        await setCredentials(args);
+      } else {
+        await initiateLogin();
+      }
       return;
     }
     if (cmd === "logout") {
-      appendSystemMessage("Logout is not yet supported from the UI. You can delete `/data/.claude/.credentials.json` via the Studio Code Server add-on.");
+      appendSystemMessage("Logout is not yet supported from the UI.");
       promptInput.value = "";
       return;
     }
@@ -541,7 +547,16 @@ async function checkAuth() {
 // ============================================================
 
 async function initiateLogin() {
-  appendSystemMessage("Starting authentication...");
+  appendSystemMessage(
+    "**Authentication options:**\n\n" +
+    "**Option 1 — Transfer from your computer:**\n" +
+    "On your Mac/Linux where Claude Code is already logged in, run:\n\n" +
+    "```\nsecurity find-generic-password -s 'Claude Code-credentials' -w\n```\n\n" +
+    "Copy the entire output, then type:\n`/login {paste the JSON here}`\n\n" +
+    "**Option 2 — On Linux**, copy `~/.claude/.credentials.json` content and use `/login {paste}`\n\n" +
+    "**Option 3 — OAuth (may not work in containers):**\n" +
+    "Starting OAuth flow..."
+  );
 
   try {
     const res = await fetch(apiUrl("/api/auth/login"), { method: "POST" });
@@ -549,7 +564,6 @@ async function initiateLogin() {
     const decoder = new TextDecoder();
     let buffer = "";
     let currentEvent = "";
-    let authUrl = null;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -568,19 +582,10 @@ async function initiateLogin() {
           try {
             const parsed = JSON.parse(data);
             if (currentEvent === "auth_url" && parsed.url) {
-              authUrl = parsed.url;
-              appendSystemMessage(
-                `**Open this link to authenticate:**\n\n[${parsed.url}](${parsed.url})\n\nClick the link above, log in with your Anthropic account, then come back here.`
-              );
-            } else if (currentEvent === "done") {
-              if (parsed.success) {
-                appendSystemMessage("Authentication successful!");
-                checkAuth();
-              } else if (!authUrl) {
-                appendSystemMessage("Authentication process ended. Output:\n\n```\n" + (parsed.output || "no output") + "\n```");
-              }
-            } else if (currentEvent === "error") {
-              appendSystemMessage("Authentication error: " + parsed.message);
+              appendSystemMessage(`**OAuth link:** [Open to authenticate](${parsed.url})\n\n(After authenticating, if you see an error page, the OAuth callback couldn't reach the container. Use Option 1 instead.)`);
+            } else if (currentEvent === "done" && parsed.success) {
+              appendSystemMessage("Authentication successful!");
+              checkAuth();
             }
           } catch {}
           currentEvent = "";
@@ -588,7 +593,34 @@ async function initiateLogin() {
       }
     }
   } catch (err) {
-    appendSystemMessage("Failed to start authentication: " + err.message);
+    appendSystemMessage("OAuth flow failed: " + err.message + "\n\nUse Option 1 (credential transfer) instead.");
+  }
+}
+
+async function setCredentials(input) {
+  try {
+    let creds;
+    try {
+      creds = JSON.parse(input);
+    } catch {
+      appendSystemMessage("Invalid JSON. Please paste the exact output of the credentials command.");
+      return;
+    }
+
+    const res = await fetch(apiUrl("/api/auth/credentials"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(creds),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      appendSystemMessage("Credentials saved successfully! Checking auth status...");
+      await checkAuth();
+    } else {
+      appendSystemMessage("Failed to save credentials: " + (data.error || "unknown error"));
+    }
+  } catch (err) {
+    appendSystemMessage("Error: " + err.message);
   }
 }
 

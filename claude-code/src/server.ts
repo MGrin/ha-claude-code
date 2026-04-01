@@ -181,6 +181,18 @@ app.post("/api/auth/login", async (c) => {
   });
 });
 
+// API: Set credentials directly (for environments where OAuth callback can't work)
+app.post("/api/auth/credentials", async (c) => {
+  try {
+    const body = await c.req.json();
+    const credPath = "/data/.claude/.credentials.json";
+    await Bun.write(credPath, JSON.stringify(body, null, 2));
+    return c.json({ ok: true });
+  } catch (err: any) {
+    return c.json({ ok: false, error: err.message }, 500);
+  }
+});
+
 // Serve main UI for all other routes (SPA)
 app.get("*", async (c) => {
   const html = await Bun.file("./public/index.html").text();
