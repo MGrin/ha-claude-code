@@ -5,7 +5,6 @@ import {
   getSessions,
   getMessages,
   streamChat,
-  checkAuth,
   deleteSession,
 } from "./claude";
 import { getUsage } from "./usage";
@@ -94,17 +93,40 @@ app.get("/api/usage", (c) => {
   return c.json(getUsage());
 });
 
-// API: Check auth status
+// API: Check auth status — uses `claude auth status`
 app.get("/api/auth/status", async (c) => {
-  const authenticated = await checkAuth();
-  return c.json({ authenticated });
+  try {
+    const proc = Bun.spawn(["claude", "auth", "status"], {
+      env: { ...process.env, HOME: "/data" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const output = await new Response(proc.stdout).text();
+    const exitCode = await proc.exited;
+    if (exitCode === 0) {
+      try {
+        const data = JSON.parse(output);
+        return c.json({
+          authenticated: data.loggedIn === true,
+          email: data.email,
+          subscription: data.subscriptionType,
+          authMethod: data.authMethod,
+        });
+      } catch {
+        return c.json({ authenticated: true });
+      }
+    }
+    return c.json({ authenticated: false });
+  } catch {
+    return c.json({ authenticated: false });
+  }
 });
 
-// API: Initiate login — runs `claude login` and captures the OAuth URL
+// API: Initiate login — runs `claude auth login` and captures the OAuth URL
 app.post("/api/auth/login", async (c) => {
   return streamSSE(c, async (stream) => {
     try {
-      const proc = Bun.spawn(["claude", "login"], {
+      const proc = Bun.spawn(["claude", "auth", "login", "--claudeai"], {
         env: { ...process.env, HOME: "/data", BROWSER: "echo" },
         stdout: "pipe",
         stderr: "pipe",

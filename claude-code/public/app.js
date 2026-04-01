@@ -525,9 +525,11 @@ async function checkAuth() {
     const res = await fetch(apiUrl("/api/auth/status"));
     const data = await res.json();
     authStatus.className = data.authenticated ? "auth-ok" : "auth-error";
-    authStatus.title = data.authenticated
-      ? "Authenticated"
-      : "Not authenticated — run 'claude login' in add-on terminal";
+    if (data.authenticated) {
+      authStatus.title = `Authenticated: ${data.email || ""} (${data.subscription || ""})`;
+    } else {
+      authStatus.title = "Not authenticated — type /login";
+    }
   } catch {
     authStatus.className = "auth-error";
     authStatus.title = "Cannot reach backend";

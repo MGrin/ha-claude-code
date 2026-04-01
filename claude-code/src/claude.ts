@@ -230,30 +230,3 @@ export async function* streamChat(
   }
 }
 
-export async function checkAuth(): Promise<boolean> {
-  try {
-    // Use persistSession: false to avoid creating "ghost" sessions
-    const conversation = query({
-      prompt: "ok",
-      options: {
-        cwd: WORKING_DIR,
-        maxTurns: 1,
-        model: "claude-haiku-4-5-20251001",
-        persistSession: false,
-      },
-    });
-
-    for await (const message of conversation) {
-      if (message.type === "system" && (message as any).subtype === "init") {
-        conversation.close();
-        return true;
-      }
-      if (message.type === "result") {
-        return !(message as any).is_error;
-      }
-    }
-    return true;
-  } catch {
-    return false;
-  }
-}
